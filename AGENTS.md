@@ -1,0 +1,136 @@
+# AGENTS.md — global template
+
+This is a **project-agnostic** agent-guidelines file. It codifies the
+development workflow that has worked well across the `~/pse/*` repos:
+TDD, `backlog` for progress tracking, `jj` (Jujutsu) for version control,
+and a strict PR review loop built on `roborev` + GitHub reviewer bots.
+
+Each consuming repo replaces this top section with a project-specific
+header (project name + one-line description) and appends a
+`## Project-specific` section at the bottom (build commands, layout,
+special invariants). Everything between is shared.
+
+See `README.md` for installation options (symlink vs copy vs submodule).
+
+## Development Workflow
+
+### TDD (Test-Driven Development)
+- Write tests FIRST before implementing features
+- Red → Green → Refactor cycle
+- Run tests frequently during development
+
+### Progress Tracking
+- Use `backlog` CLI to track all work (`backlog task list`, `backlog task edit`, `backlog task view`)
+- Update the relevant backlog task status/notes when starting or completing work
+- Treat any `docs/KANBAN.md` as historical archive only (do not use it for active tracking)
+
+### Version Control — `jj` (Jujutsu)
+Use `jj` instead of `git` for all VCS operations. Common commands:
+- `jj status` — show working copy changes
+- `jj log` — show commit history
+- `jj new -m "message"` — create new change
+- `jj describe -m "message"` — update current change description
+- `jj squash` — squash into parent
+- `jj rebase -s <rev> -d <dest>` — rebase a change (and descendants) onto a destination
+- `jj bookmark set <name> -r <rev>` — create/move a bookmark (needed before `jj git push`)
+- `jj git push --bookmark <name>` — push (sideways moves are safe force-with-lease)
+- `jj git import` / `jj git export` — sync with the underlying git repo (auto in colocated workspaces)
+- `jj metaedit --update-author` — fix author info
+
+Notes:
+- `change_id` is stable across rewrites; `commit_id` (git SHA) is not. Reference prior work by `change_id` in backlog notes when possible.
+- A "mutable" jj change will get a new git SHA every time you amend it; do NOT self-reference SHAs in commit messages or notes — they go stale.
+- For PRs: keep one logical change per bookmark. Use `jj new main@origin -m "..."` to start a fresh branch.
+
+### Pull Request review loop (MANDATORY — do not skip)
+Every PR must complete the FULL review loop before merge. Roborev is one
+input, not the whole loop.
+
+1. **Run roborev 2×2** (`codex` + `claude-code` × `security` + `design`) on
+   the pushed SHA. Enqueue sequentially (not in a parallel `&` batch) to
+   avoid the daemon race where 3 of 4 jobs fail with
+   `repo_path and git_ref are required`:
+   ```bash
+   roborev review "<SHA>" --repo "$PWD" --agent codex       --model gpt-5.5 --type security
+   roborev review "<SHA>" --repo "$PWD" --agent codex       --model gpt-5.5 --type design
+   roborev review "<SHA>" --repo "$PWD" --agent claude-code --model opus    --type security
+   roborev review "<SHA>" --repo "$PWD" --agent claude-code --model opus    --type design
+   ```
+2. **Wait for the GitHub bot reviews to land** before triaging — they are
+   asynchronous and inline findings can arrive minutes after the push.
+   Poll the PR's reviews/comments (see step 3) until each expected bot
+   (`gemini-code-assist[bot]`, `coderabbitai[bot]`, `Cursor Bugbot`) has
+   either posted or timed out. If a bot never responds, record that
+   explicitly ("timed out / not installed") in the PR body so the absence
+   is deliberate, not accidental.
+3. **Read the GitHub bot reviews**, not just roborev:
+   - `gemini-code-assist[bot]` — inline comments (often the most actionable)
+   - `coderabbitai[bot]`
+   - `Cursor Bugbot`
+   - any other installed reviewer bot
+   Inspect with (replace `<OWNER>`/`<REPO>`/`<N>`):
+   ```bash
+   gh api repos/<OWNER>/<REPO>/pulls/<N>/reviews   --jq '.[] | {user,state,body}'
+   gh api repos/<OWNER>/<REPO>/pulls/<N>/comments  --jq '.[] | {user,path,line,body}'
+   gh api repos/<OWNER>/<REPO>/issues/<N>/comments --jq '.[].user.login'
+   ```
+4. **Triage every inline finding** (action / defer-with-reason / reject-with-reason).
+   Actionable HIGH/MEDIUM findings MUST be fixed in the CURRENT PR before
+   merge — do NOT merge with an actionable HIGH/MEDIUM finding outstanding.
+   A follow-up PR is acceptable only for (a) historical findings on already-
+   merged code, or (b) findings you explicitly defer with a recorded
+   rationale in both the PR body and the review thread reply.
+5. **Reply on the thread** for each actionable inline comment
+   (`POST .../pulls/<N>/comments/<id>/replies`), linking the follow-up PR if
+   the fix lands separately. Replies MUST go on the **same PR that owns
+   the comment** — `comment_id` is scoped to its PR:
+   ```bash
+   gh api -X POST repos/<OWNER>/<REPO>/pulls/<N>/comments/<comment_id>/replies \
+     -f body="Fixed in this PR via ..." --jq '{created: (.created_at != null)}'
+   ```
+6. **Close the roborev job** once findings are addressed or explicitly
+   deferred: `roborev close <job_id>` (alias `address`). Open reviews are
+   not a backlog — they are state that must be resolved per-PR.
+7. **Compact regularly.** After merging a series of PRs (or any time
+   `roborev list --open --limit 200` shows > 10 open reviews), run:
+   ```bash
+   roborev compact --all-branches --wait --limit 50 --timeout 15m
+   ```
+   This consolidates duplicates, drops false positives / already-fixed
+   findings, and auto-closes the originals. The resulting consolidated job
+   must itself be triaged (step 4) and closed (step 6). Do this across ALL
+   branches (`--all-branches`) — reviews live on whatever feature branch
+   the PR used, not just `main`.
+8. **If fixes are needed**, open a follow-up PR and re-run steps 1–7 on it.
+
+### Hard-won lessons
+- **2026-06-17, TASK-54.1–54.7 (morphogenesis):** running only roborev and
+  ignoring `gemini-code-assist` inline reviews let a real HIGH-severity bug
+  (`--refresh-interval 0` tight loop) ship through 7 PRs. Bot-review
+  handling is part of the merge gate.
+- **2026-06-17, TASK-54.8–54.10 (morphogenesis):** left 64 roborev reviews
+  open across the series because steps 6/7 were missing from the loop.
+  `roborev compact --all-branches` cut them to 15 and surfaced 7 verified
+  findings that had been silently accumulating. Always close per-PR and
+  compact when open count > 10.
+- **2026-06-17, TASK-54.11 (morphogenesis):** codex security and
+  `gemini-code-assist` independently caught a behavior regression
+  (`is_allowed_snapshot_host` subdomain-matching lost during a refactor).
+  Fixed in the same PR rather than follow-up because of step 4. This is
+  exactly why step 4 forbids merging with HIGH/MEDIUM outstanding.
+
+---
+
+## Project-specific
+
+<!-- Replace this section in each consuming repo. Typical contents: -->
+
+### Build & Test Commands
+<!-- e.g. cargo / mix / go / pnpm commands -->
+
+### Project Structure
+<!-- one-line per top-level directory/component -->
+
+### Project invariants
+<!-- any non-negotiable security/privacy/correctness invariants reviewers
+     must preserve across changes -->

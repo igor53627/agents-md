@@ -126,19 +126,26 @@ input, not the whole loop.
 # 1. CI is CLEAN (all required checks SUCCESS)
 gh pr view <N> --json mergeStateStatus --jq '.mergeStateStatus'  # must print CLEAN
 
-# 2. greptile has posted (it is the slowest bot — 5-10 min after push)
+# 2. greptile has posted (it is the slowest bot — 5-10 min after push).
+#    Check BOTH inline comments AND reviews (greptile may post a top-level
+#    review with no inline comment):
 gh api repos/<OWNER>/<REPO>/pulls/<N>/comments \
   --jq '[.[] | select(.user.login == "greptile-apps[bot]")] | length'
-# If 0 AND the PR was pushed <10 min ago: WAIT. Do not merge.
+gh api repos/<OWNER>/<REPO>/pulls/<N>/reviews \
+  --jq '[.[] | select(.user.login == "greptile-apps[bot]")] | length'
+# If BOTH are 0 AND the PR was pushed <10 min ago: WAIT. Do not merge.
 # greptile catches cfg-gated compile failures and AC/notes consistency
 # issues that gemini + roborev miss.
 
-# 3. No unresolved review threads
+# 3. No unresolved review threads (paginate if >50 threads)
 gh api graphql -f query='{ repository(owner: "<OWNER>", name: "<REPO>") {
-  pullRequest(number: <N>) { reviewThreads(first: 30) {
-    nodes { isResolved } } } } }' \
-  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
-        | select(.isResolved == false)] | length'  # must print 0
+  pullRequest(number: <N>) { reviewThreads(first: 50) {
+    nodes { isResolved } pageInfo { hasNextPage } } } } }' \
+  --jq 'if .data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage
+        then "ERROR: >50 threads, paginate manually"
+        else [.data.repository.pullRequest.reviewThreads.nodes[]
+              | select(.isResolved == false)] | length
+        end'  # must print 0
 
 # 4. roborev jobs closed
 roborev list --open --limit 200 --json --repo "$PWD" \

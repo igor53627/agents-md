@@ -120,6 +120,33 @@ input, not the whole loop.
    the PR used, not just `main`.
 9. **If fixes are needed**, open a follow-up PR and re-run steps 1–8 on it.
 
+### Pre-merge checklist (run this BEFORE every `gh pr merge`)
+
+```bash
+# 1. CI is CLEAN (all required checks SUCCESS)
+gh pr view <N> --json mergeStateStatus --jq '.mergeStateStatus'  # must print CLEAN
+
+# 2. greptile has posted (it is the slowest bot — 5-10 min after push)
+gh api repos/<OWNER>/<REPO>/pulls/<N>/comments \
+  --jq '[.[] | select(.user.login == "greptile-apps[bot]")] | length'
+# If 0 AND the PR was pushed <10 min ago: WAIT. Do not merge.
+# greptile catches cfg-gated compile failures and AC/notes consistency
+# issues that gemini + roborev miss.
+
+# 3. No unresolved review threads
+gh api graphql -f query='{ repository(owner: "<OWNER>", name: "<REPO>") {
+  pullRequest(number: <N>) { reviewThreads(first: 30) {
+    nodes { isResolved } } } } }' \
+  --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+        | select(.isResolved == false)] | length'  # must print 0
+
+# 4. roborev jobs closed
+roborev list --open --limit 200 --json --repo "$PWD" \
+  --branch <BRANCH> | jq 'length'  # must print 0
+```
+
+Only after ALL FOUR pass: `gh pr merge <N> --merge --delete-branch`.
+
 ### Hard-won lessons
 - **2026-06-17, TASK-54.1–54.7 (morphogenesis):** running only roborev and
   ignoring `gemini-code-assist` inline reviews let a real HIGH-severity bug

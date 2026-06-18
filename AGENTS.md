@@ -184,7 +184,9 @@ gh pr list --state all --head <branch> --json number,state,mergedAt
 # 3. Delete the branch in BOTH places if its PR is MERGED (or it has no PR
 #    and is provably dead — e.g. a local scratch branch):
 git branch -d <branch>                       # local; falls back to -D below
-git push origin --delete <branch>            # remote (no-op if already gone)
+git push origin --delete <branch>            # remote — errors (NOT a no-op)
+                                             # if already gone; append `|| true`
+                                             # under `set -e`
 
 # 4. Re-prune remote-tracking refs that the deletes just orphaned:
 git fetch --prune origin

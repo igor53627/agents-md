@@ -164,6 +164,46 @@ gh pr view <N> --json body --jq '.body' | grep -cE '^- \[ \].*(roborev|bot revie
 
 Only after ALL FIVE pass: `gh pr merge <N> --merge --delete-branch`.
 
+### Post-merge branch cleanup (run after every `gh pr merge`)
+The remote branch is auto-deleted only if you pass `--delete-branch` AND no
+manual force-push re-created it; local branches are NEVER auto-deleted. Stale
+branches accumulate silently across a PR series and obscure what is actually
+open. Clean up immediately after each merge, not "later":
+
+```bash
+# 1. List local + remote branches that still exist.
+git fetch --prune origin
+git branch -a
+
+# 2. For each non-`main` branch, check its PR state via gh (NOT `git --merged`).
+#    In squash-merge repos `git branch --merged main` is USELESS — GitHub mints
+#    a fresh SHA on `main`, so the feature branch's tip is never in main's
+#    history even after a clean merge. `gh` reads the actual PR state:
+gh pr list --state merged --head <branch> --json number,state,mergedAt
+
+# 3. Delete the branch in BOTH places if its PR is MERGED (or it has no PR
+#    and is provably dead — e.g. a local scratch branch):
+git branch -d <branch>                       # local; refuses (-d exits non-zero)
+                                             # for squash-merged branches — see below
+git push origin --delete <branch>            # remote — errors (NOT a no-op)
+                                             # if already gone; append `|| true`
+                                             # under `set -e`
+
+# 4. Re-prune remote-tracking refs that the deletes just orphaned:
+git fetch --prune origin
+```
+
+Step 3 notes:
+* `git branch -d` refuses a squash-merged branch (its tip is not in `main`'s
+  history, so `-d`'s safety check fails). After confirming `MERGED` via `gh`
+  in step 2, force with `git branch -D <branch>`. In a regular-merge repo `-d`
+  works and IS the safer check — keep it where you can.
+* `gh pr merge --delete-branch` deletes the REMOTE at merge time, but a LOCAL
+  ref always remains, and a re-push (or a merge without `--delete-branch`)
+  leaves the remote behind too. Treat the four-step cleanup as part of the
+  merge, not a periodic chore — a long-lived branch list with 8 stale entries
+  is how an "already-shipped" branch gets accidentally re-based and re-PR'd.
+
 ### Hard-won lessons
 - **2026-06-17, TASK-54.1–54.7 (morphogenesis):** running only roborev and
   ignoring `gemini-code-assist` inline reviews let a real HIGH-severity bug
@@ -199,6 +239,16 @@ Only after ALL FIVE pass: `gh pr merge <N> --merge --delete-branch`.
   (`is_allowed_snapshot_host` subdomain-matching lost during a refactor).
   Fixed in the same PR rather than follow-up because of step 4. This is
   exactly why step 4 forbids merging with HIGH/MEDIUM outstanding.
+- **2026-06-18, post-umbrella cleanup (`2d`):** after merging a 3-PR series
+  (#193/#194/#195), `git branch --merged main` reported only `main` itself —
+  looked like "nothing is merged". In fact all three feature branches AND three
+  older ones (#156/#189/#155) were MERGED via GitHub **squash-merge**, which
+  mints a fresh commit SHA on `main`; the feature tip is never in main's
+  history, so `--merged` is silently empty. The reliable signal is
+  `gh pr list --state merged --head <branch>`. Six stale branches (3 local,
+  3 remote) had been sitting for up to a week because of this blind spot.
+  Added the Post-merge branch cleanup section above. Never trust `--merged`
+  in a squash-merge repo.
 
 ---
 

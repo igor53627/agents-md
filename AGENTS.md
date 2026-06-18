@@ -179,11 +179,12 @@ git branch -a
 #    In squash-merge repos `git branch --merged main` is USELESS — GitHub mints
 #    a fresh SHA on `main`, so the feature branch's tip is never in main's
 #    history even after a clean merge. `gh` reads the actual PR state:
-gh pr list --state all --head <branch> --json number,state,mergedAt
+gh pr list --state merged --head <branch> --json number,state,mergedAt
 
 # 3. Delete the branch in BOTH places if its PR is MERGED (or it has no PR
 #    and is provably dead — e.g. a local scratch branch):
-git branch -d <branch>                       # local; falls back to -D below
+git branch -d <branch>                       # local; refuses (-d exits non-zero)
+                                             # for squash-merged branches — see below
 git push origin --delete <branch>            # remote — errors (NOT a no-op)
                                              # if already gone; append `|| true`
                                              # under `set -e`

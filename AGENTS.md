@@ -115,7 +115,7 @@ input, not the whole loop.
    ```
    This consolidates duplicates, drops false positives / already-fixed
    findings, and auto-closes the originals. The resulting consolidated job
-   must itself be triaged (step 4) and closed (step 6). Do this across ALL
+   must itself be triaged (step 4) and closed (step 7). Do this across ALL
    branches (`--all-branches`) — reviews live on whatever feature branch
    the PR used, not just `main`.
 9. **If fixes are needed**, open a follow-up PR and re-run steps 1–8 on it.
@@ -150,9 +150,19 @@ gh api graphql -f query='{ repository(owner: "<OWNER>", name: "<REPO>") {
 # 4. roborev jobs closed
 roborev list --open --limit 200 --json --repo "$PWD" \
   --branch <BRANCH> | jq 'length'  # must print 0
+
+# 5. PR body's review-loop checkboxes are ALL marked [x] (status report,
+#    not a to-do list). A merged PR with unchecked "roborev 2x2" / "threads
+#    resolved" / "jobs closed" reads as "loop was never completed" to
+#    future readers (and future-you in the next session). Scope the grep to
+#    the review-loop section so a legitimately-unchecked box elsewhere in
+#    the body (deferred task, future-work list) does not false-block.
+gh pr view <N> --json body --jq '.body' | grep -cE '^- \[ \].*(roborev|bot review|threads|jobs closed|triaged)'  # must print 0
+# If any review-loop `[ ]` line remains, update the PR body before merging:
+#   gh pr edit <N> --body-file <updated-with-[x]>
 ```
 
-Only after ALL FOUR pass: `gh pr merge <N> --merge --delete-branch`.
+Only after ALL FIVE pass: `gh pr merge <N> --merge --delete-branch`.
 
 ### Hard-won lessons
 - **2026-06-17, TASK-54.1–54.7 (morphogenesis):** running only roborev and
@@ -164,10 +174,6 @@ Only after ALL FOUR pass: `gh pr merge <N> --merge --delete-branch`.
   `roborev compact --all-branches` cut them to 15 and surfaced 7 verified
   findings that had been silently accumulating. Always close per-PR and
   compact when open count > 10.
-- **2026-06-17, TASK-54.11 (morphogenesis):** codex security and
-  `gemini-code-assist` independently caught a behavior regression
-  (`is_allowed_snapshot_host` subdomain-matching lost during a refactor).
-  Fixed in the same PR rather than follow-up because of step 4.
 - **2026-06-17, TASK-55.3 (morphogenesis):** left a stray `#[derive]` on
   `init_gpu_resources` during a Python-script extraction. Non-cuda CI
   stayed green (cfg-gated). `greptile-apps[bot]` — the 5th reviewer bot —
@@ -176,6 +182,18 @@ Only after ALL FOUR pass: `gh pr merge <N> --merge --delete-branch`.
 - **2026-06-17:** across PRs #22–#50, left 23 review threads open after
   replying — the "Resolve conversation" GraphQL step was missing from
   the loop. Added as step 6. Never leave a thread open after triage.
+- **2026-06-18, slice-4 PRs (#191/#192 on `2d`):** the review loop was
+  fully executed (roborev 2×2 × multiple rounds, all 5 bot reviews read
+  including greptile, every thread replied+resolved, all roborev jobs
+  closed) — but the PR
+  bodies were merged with `[ ]` checkboxes on those steps still
+  unchecked. The checkboxes were authored as a to-do list at PR-open
+  time and never re-marked `[x]` once the loop completed. To a future
+  reader (and the same agent in a later session) a merged PR with
+  "`[ ]` roborev 2×2 enqueued" reads as "the loop was abandoned".
+  Added pre-merge checklist item #5: re-mark the PR body's review-loop
+  checkboxes `[x]` before `gh pr merge`. The body is a status report,
+  not a to-do list.
 - **2026-06-17, TASK-54.11 (morphogenesis):** codex security and
   `gemini-code-assist` independently caught a behavior regression
   (`is_allowed_snapshot_host` subdomain-matching lost during a refactor).

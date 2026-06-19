@@ -249,6 +249,22 @@ Step 3 notes:
   3 remote) had been sitting for up to a week because of this blind spot.
   Added the Post-merge branch cleanup section above. Never trust `--merged`
   in a squash-merge repo.
+- **2026-06-18, TASK-132.8 (`2d` runbook PR #197):** edited task files
+  (`task-132.8`, `task-132.5.2.4`, and earlier `task-132.5.2.5` across the
+  umbrella series) **directly** — `status` flip, AC checkboxes, AC text
+  rewrites, final-summary appends — instead of through the `backlog` CLI.
+  The repo's `CLAUDE.md:51` ("NEVER EDIT TASK FILES DIRECTLY. Edit Only via
+  CLI") and `AGENTS.md:23` both mandate the CLI; the CLI was installed
+  (`backlog 1.47.0`, supports `--check-ac`/`--status`/`--final-summary`/
+  `--notes`), so this was not a tooling gap — it was forgetting the rule
+  mid-session. greptile caught it (P1). The CONTENT was correct (no revert);
+  the violation is procedural — direct edits bypass the CLI's AC-index /
+  status-enum validation and can drift a task file's shape. Before editing a
+  task file in `backlog/tasks/`, grep for the local "NEVER EDIT TASK FILES"
+  rule (CLAUDE.md / repo AGENTS.md) and use the CLI instead:
+  `backlog task edit <id> -s "In Progress"`, `--check-ac <N>`,
+  `--final-summary "..."`, `--notes "..."`. Repeated across the whole
+  session — so this is a real failure mode, not a one-off.
 
 ---
 
